@@ -140,21 +140,23 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
       ).matches;
 
       anchorScrollFrameRef.current = window.requestAnimationFrame(() => {
-        anchorScrollFrameRef.current = null;
-        scrollEndArmedRef.current = true;
-        targetEl.scrollIntoView({
-          behavior: prefersReducedMotion ? "auto" : "smooth",
-          block: "start",
-        });
+        anchorScrollFrameRef.current = window.requestAnimationFrame(() => {
+          anchorScrollFrameRef.current = null;
+          scrollEndArmedRef.current = true;
+          targetEl.scrollIntoView({
+            behavior: prefersReducedMotion ? "auto" : "smooth",
+            block: "start",
+          });
 
-        if (prefersReducedMotion) {
-          resumeScrollSpyRef.current();
-        } else {
-          scrollEndTimeoutRef.current = window.setTimeout(
-            () => resumeScrollSpyRef.current(),
-            600
-          );
-        }
+          if (prefersReducedMotion) {
+            resumeScrollSpyRef.current();
+          } else {
+            scrollEndTimeoutRef.current = window.setTimeout(
+              () => resumeScrollSpyRef.current(),
+              600
+            );
+          }
+        });
       });
     }
   };
