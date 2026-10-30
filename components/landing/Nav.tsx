@@ -138,6 +138,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
       const prefersReducedMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
+      const supportsScrollEnd = "onscrollend" in window;
 
       anchorScrollFrameRef.current = window.requestAnimationFrame(() => {
         anchorScrollFrameRef.current = window.requestAnimationFrame(() => {
@@ -150,7 +151,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
 
           if (prefersReducedMotion) {
             resumeScrollSpyRef.current();
-          } else {
+          } else if (!supportsScrollEnd) {
             scrollEndTimeoutRef.current = window.setTimeout(
               () => resumeScrollSpyRef.current(),
               600
