@@ -1,22 +1,21 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 
 interface AgentStep {
   name: string;
   role: string;
-  status: "idle" | "running" | "done";
-  duration: number;
+  status: "idle" | "running" | "done" | "blocked";
 }
 
 interface AnalysisResult {
   candidateName: string;
   overallScore: number;
-  verdict: "STRONG HIRE" | "HIRE" | "CONSIDER" | "DO NOT HIRE";
-  verdictColor: "green" | "pink";
+  screeningScore: number;
+  recommendation: string;
   experienceYears: number;
   education: string;
-  confidence: number;
   matchingSkills: string[];
   missingSkills: string[];
   strengths: string[];
@@ -26,8 +25,29 @@ interface AnalysisResult {
     question: string;
     whatToLookFor: string;
   }[];
-  emailSubject: string;
-  emailBody: string;
+}
+
+interface PipelineResponse {
+  candidate_name: string;
+  overall_score: number;
+  screening_score: number;
+  recommendation: string;
+  experience_years: number;
+  education: string;
+  matching_skills: string[];
+  missing_skills: string[];
+  strengths: string[];
+  weaknesses: string[];
+  questions: {
+    category: string;
+    question: string;
+    what_to_look_for: string;
+  }[];
+  agents: {
+    name: string;
+    role: string;
+    status: "done" | "blocked";
+  }[];
 }
 
 interface ChatMessage {
@@ -35,6 +55,55 @@ interface ChatMessage {
   sender: "user" | "ai";
   text: string;
   timestamp: string;
+}
+
+function isPipelineResponse(value: unknown): value is PipelineResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const response = value as Record<string, unknown>;
+  const isStringArray = (items: unknown): items is string[] =>
+    Array.isArray(items) && items.every((item) => typeof item === "string");
+  const isQuestionArray = (
+    items: unknown
+  ): items is PipelineResponse["questions"] =>
+    Array.isArray(items) &&
+    items.every(
+      (question) =>
+        typeof question === "object" &&
+        question !== null &&
+        "category" in question &&
+        typeof question.category === "string" &&
+        "question" in question &&
+        typeof question.question === "string" &&
+        "what_to_look_for" in question &&
+        typeof question.what_to_look_for === "string"
+    );
+
+  return (
+    typeof response.candidate_name === "string" &&
+    typeof response.overall_score === "number" &&
+    typeof response.screening_score === "number" &&
+    typeof response.recommendation === "string" &&
+    typeof response.experience_years === "number" &&
+    typeof response.education === "string" &&
+    isStringArray(response.matching_skills) &&
+    isStringArray(response.missing_skills) &&
+    isStringArray(response.strengths) &&
+    isStringArray(response.weaknesses) &&
+    isQuestionArray(response.questions) &&
+    Array.isArray(response.agents) &&
+    response.agents.length === 6 &&
+    response.agents.every(
+      (agent) =>
+        typeof agent === "object" &&
+        agent !== null &&
+        "name" in agent &&
+        typeof agent.name === "string" &&
+        "role" in agent &&
+        typeof agent.role === "string" &&
+        "status" in agent &&
+        (agent.status === "done" || agent.status === "blocked")
+    )
+  );
 }
 
 const SAMPLE_JOB_ROLE = "Senior Full-Stack Engineer";
@@ -78,46 +147,57 @@ export default function Home() {
 
   // Pipeline State
   const [isRunning, setIsRunning] = useState(false);
-  const [currentStepIndex, setCurrentStepIndex] = useState(-1);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [copiedEmail, setCopiedEmail] = useState(false);
-
-  // Chat State
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "1",
-      sender: "ai",
-      text: "Hello! I am your STAP AI Recruitment Assistant. I can evaluate resumes, identify technical skill gaps, score candidate suitability, generate custom interview questions, and draft outreach emails. How can I assist your hiring workflow today?",
-      timestamp: "Just now",
-    },
-  ]);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isAiThinking, setIsAiThinking] = useState(false);
 
   const [pipelineSteps, setPipelineSteps] = useState<AgentStep[]>([
-    { name: "Resume Analyzer", role: "Extraction & Experience Profile", status: "idle", duration: 0 },
-    { name: "Skill Match Agent", role: "Taxonomy & Tech Gap Analysis", status: "idle", duration: 0 },
-    { name: "Scoring Agent", role: "Weighted Evaluation & Hiring Verdict", status: "idle", duration: 0 },
-    { name: "Interview Agent", role: "Adaptive Question Generation", status: "idle", duration: 0 },
-    { name: "Email Generator", role: "Personalized Outreach Drafting", status: "idle", duration: 0 },
+    { name: "Sourcing", role: "Resume Parser & Semantic Embedder", status: "idle" },
+    { name: "Screening", role: "Job-Candidate Matcher", status: "idle" },
+    { name: "Interview", role: "Adaptive Question Generator", status: "idle" },
+    { name: "Evaluation", role: "Scorecard Synthesizer", status: "idle" },
+    { name: "Scheduling", role: "Calendar Coordinator", status: "idle" },
+    { name: "Compliance", role: "Fair Hiring & Bias Guard", status: "idle" },
   ]);
 
   useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    let currentTheme: "light" | "dark" = media.matches ? "dark" : "light";
     try {
-      const saved = localStorage.getItem("stap-theme") as "light" | "dark" | null;
+      const saved = localStorage.getItem("stap-theme");
       if (saved === "dark" || saved === "light") {
-        setTheme(saved);
-        document.documentElement.setAttribute("data-theme", saved);
+        currentTheme = saved;
       }
     } catch {
-      // ignore
+      // The system preference remains available when storage is disabled.
     }
+
+    const applyTheme = (nextTheme: "light" | "dark") => {
+      setTheme(nextTheme);
+      document.documentElement.setAttribute("data-theme", nextTheme);
+      document.documentElement.style.colorScheme = nextTheme;
+    };
+
+    applyTheme(currentTheme);
+    const onSystemChange = () => {
+      try {
+        if (localStorage.getItem("stap-theme")) return;
+      } catch {
+        return;
+      }
+      applyTheme(media.matches ? "dark" : "light");
+    };
+    media.addEventListener("change", onSystemChange);
+    return () => media.removeEventListener("change", onSystemChange);
   }, []);
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
     document.documentElement.setAttribute("data-theme", next);
+    document.documentElement.style.colorScheme = next;
     try {
       localStorage.setItem("stap-theme", next);
     } catch {
@@ -130,131 +210,90 @@ export default function Home() {
     setRequiredSkills(SAMPLE_REQUIRED_SKILLS);
     setResumeText(SAMPLE_RESUME);
     setResult(null);
+    setErrorMessage("");
   };
 
   const handleRunPipeline = async () => {
     if (!jobRole.trim() || !resumeText.trim()) {
-      alert("Please enter a Target Job Role and Candidate Resume.");
+      setResult(null);
+      setErrorMessage("Enter a target job role and candidate resume before running the pipeline.");
       return;
     }
 
     setIsRunning(true);
     setResult(null);
+    setErrorMessage("");
+    setPipelineSteps((steps) => steps.map((step) => ({ ...step, status: "idle" })));
 
-    // Reset steps
-    const initial = pipelineSteps.map((s) => ({ ...s, status: "idle" as const, duration: 0 }));
-    setPipelineSteps(initial);
-
-    // Sequential simulation of the 5 agents
-    for (let i = 0; i < initial.length; i++) {
-      setCurrentStepIndex(i);
-      setPipelineSteps((prev) =>
-        prev.map((s, idx) => (idx === i ? { ...s, status: "running" } : s))
-      );
-
-      const delay = Math.floor(Math.random() * 500) + 700;
-      await new Promise((r) => setTimeout(r, delay));
-
-      setPipelineSteps((prev) =>
-        prev.map((s, idx) =>
-          idx === i ? { ...s, status: "done", duration: Math.round(delay) } : s
-        )
-      );
-    }
-
-    // Build realistic results based on inputs
-    const candidateName =
-      resumeText.split("\n")[0].replace(/[^a-zA-Z\s]/g, "").trim() || "Candidate";
-
-    const skillsArray = requiredSkills
-      .split(/[,;\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const matching: string[] = [];
-    const missing: string[] = [];
-
-    skillsArray.forEach((skill) => {
-      if (new RegExp(skill, "i").test(resumeText)) {
-        matching.push(skill);
-      } else {
-        missing.push(skill);
+    try {
+      const response = await fetch("/api/pipeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRole, requiredSkills, resumeText }),
+      });
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new Error("The scoring backend returned an invalid response.");
       }
-    });
 
-    if (matching.length === 0) {
-      matching.push("TypeScript", "React", "Node.js", "PostgreSQL", "AWS");
+      if (!response.ok) {
+        const message =
+          typeof payload === "object" &&
+          payload !== null &&
+          "message" in payload &&
+          typeof payload.message === "string"
+            ? payload.message
+            : typeof payload === "object" &&
+                payload !== null &&
+                "detail" in payload &&
+                typeof payload.detail === "string"
+              ? payload.detail
+              : "The candidate pipeline could not complete.";
+        throw new Error(message);
+      }
+
+      if (!isPipelineResponse(payload)) {
+        throw new Error("The scoring backend returned an incomplete or invalid result.");
+      }
+
+      setResult({
+        candidateName: payload.candidate_name,
+        overallScore: payload.overall_score,
+        screeningScore: payload.screening_score,
+        recommendation: payload.recommendation,
+        experienceYears: payload.experience_years,
+        education: payload.education,
+        matchingSkills: payload.matching_skills,
+        missingSkills: payload.missing_skills,
+        strengths: payload.strengths,
+        weaknesses: payload.weaknesses,
+        questions: payload.questions.map((question) => ({
+          category: question.category,
+          question: question.question,
+          whatToLookFor: question.what_to_look_for,
+        })),
+      });
+      setPipelineSteps(
+        payload.agents.map((agent) => ({
+          name: agent.name,
+          role: agent.role,
+          status: agent.status,
+        }))
+      );
+    } catch (error) {
+      setPipelineSteps((steps) =>
+        steps.map((step) => ({ ...step, status: "idle" }))
+      );
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred while contacting the scoring backend."
+      );
+    } finally {
+      setIsRunning(false);
     }
-
-    const ratio = matching.length / (matching.length + missing.length || 1);
-    const score = Math.min(96, Math.max(72, Math.round(ratio * 35 + 60)));
-
-    const analysis: AnalysisResult = {
-      candidateName,
-      overallScore: score,
-      verdict: score >= 85 ? "STRONG HIRE" : score >= 75 ? "HIRE" : "CONSIDER",
-      verdictColor: score >= 75 ? "green" : "pink",
-      experienceYears: 7,
-      education: "B.S. in Computer Science (UC Berkeley)",
-      confidence: 94,
-      matchingSkills: matching.length > 0 ? matching : ["TypeScript", "React", "Next.js", "Node.js", "AWS"],
-      missingSkills: missing.length > 0 ? missing : ["gRPC", "Kubernetes Multi-Cluster"],
-      strengths: [
-        "Proven full-stack leadership with Next.js App Router and Python FastAPI production platforms.",
-        "Demonstrated performance optimization: reduced database latency by 42% via Redis and PostgreSQL tuning.",
-        "Deep familiarity with recruitment ATS ecosystems (Greenhouse, Ashby integrations).",
-      ],
-      weaknesses: [
-        missing.length > 0
-          ? `Limited documented exposure to ${missing.join(", ")} in recent roles.`
-          : "Could explore deeper multi-region cloud disaster recovery architectures.",
-        "Verify candidate's direct experience with high-concurrency microservice rate limiting.",
-      ],
-      questions: [
-        {
-          category: "Technical Deep-Dive",
-          question: `In your recent work with Next.js and Node.js/Python, how do you manage server-side streaming and caching consistency across distributed Redis instances?`,
-          whatToLookFor:
-            "Look for understanding of cache invalidation strategies, Redis Pub/Sub, and state hydration in React Server Components.",
-        },
-        {
-          category: "System Design & Architecture",
-          question: `Walk us through how you would architect a real-time candidate scoring pipeline that evaluates 10,000 resume submissions per hour without exceeding API rate limits.`,
-          whatToLookFor:
-            "Assess knowledge of message queues (SQS/Kafka), asynchronous background worker pools, and idempotency.",
-        },
-        {
-          category: "Behavioral & Leadership",
-          question: `Tell us about a time when you had to disagree with a product manager on an architectural tradeoff to avoid technical debt. How did you align the team?`,
-          whatToLookFor:
-            "Look for empathy, data-driven argumentation, and ability to deliver pragmatic business value.",
-        },
-      ],
-      emailSubject: `Invitation to Interview: ${jobRole} at STAP`,
-      emailBody: `Hi ${candidateName},
-
-Thank you for your interest in the ${jobRole} position at STAP! 
-
-Our AI recruitment review team was particularly impressed by your extensive background architecting high-performance web systems and full-stack platforms. Your hands-on experience optimizing latency and building scalable cloud-native services closely matches our technical vision.
-
-We would love to invite you for a 45-minute technical conversation with our engineering team to discuss your past projects, dive into system architecture, and share more about what we are building.
-
-Could you let us know your availability over the next few days? Looking forward to connecting!
-
-Best regards,
-The Recruitment Team
-STAP Technologies`,
-    };
-
-    setResult(analysis);
-    setIsRunning(false);
-  };
-
-  const handleCopyEmail = () => {
-    if (!result) return;
-    navigator.clipboard.writeText(`Subject: ${result.emailSubject}\n\n${result.emailBody}`);
-    setCopiedEmail(true);
-    setTimeout(() => setCopiedEmail(false), 2000);
   };
 
   const handleSendChat = async () => {
@@ -325,13 +364,13 @@ The Hiring Team`;
       <header className="site-header">
         <div className="nav-container">
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <a href="/" className="logo">
-              <i></i>STAP AI Assistant
-            </a>
-            <span className="badge green">Multi-Agent Intelligence</span>
+            <Link href="/" className="logo" aria-label="STAP home">
+              <i></i>STAP
+            </Link>
+            <span className="badge green">AI Assistant</span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div className="assistant-nav-actions">
             <button
               className={`tab-pill ${activeTab === "pipeline" ? "active" : ""}`}
               onClick={() => setActiveTab("pipeline")}
@@ -339,18 +378,12 @@ The Hiring Team`;
             >
               Candidate Pipeline
             </button>
-            <button
-              className={`tab-pill ${activeTab === "chat" ? "active" : ""}`}
-              onClick={() => setActiveTab("chat")}
-              type="button"
-            >
-              Recruiter Chat
-            </button>
+            <Link className="back-home" href="/">Back to home</Link>
             <button
               className="tg"
               onClick={toggleTheme}
               type="button"
-              aria-label="Switch Theme"
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             >
               {theme === "dark" ? "☀" : "☾"}
             </button>
@@ -369,9 +402,8 @@ The Hiring Team`;
                   Candidate Scoring & <span className="g">Multi-Agent Review</span>
                 </h1>
                 <p style={{ color: "var(--mute)", fontSize: "14px", maxWidth: "600px" }}>
-                  Submit a job specification and candidate resume. Five autonomous AI agents will
-                  extract experience, match tech gaps, compute scorecards, and generate interview
-                  questions.
+                  Submit a job specification and candidate resume for review by six agents:
+                  Sourcing, Screening, Interview, Evaluation, Scheduling, and Compliance.
                 </p>
               </div>
 
@@ -397,7 +429,7 @@ The Hiring Team`;
                   </button>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div className="assistant-form-grid">
                   <div>
                     <label className="input-label">Target Job Role *</label>
                     <input
@@ -409,7 +441,7 @@ The Hiring Team`;
                     />
                   </div>
                   <div>
-                    <label className="input-label">Required Skills (Comma-separated) *</label>
+                    <label className="input-label">Required Skills (Comma-separated)</label>
                     <input
                       type="text"
                       className="input-field"
@@ -437,10 +469,30 @@ The Hiring Team`;
                   style={{ width: "100%", padding: "12px 20px", fontSize: "14px" }}
                   onClick={handleRunPipeline}
                   disabled={isRunning}
+                  aria-busy={isRunning}
                 >
-                  {isRunning ? "Running Multi-Agent Orchestrator..." : "⚡ Run AI Agents Pipeline"}
+                  {isRunning ? "Contacting scoring backend..." : "⚡ Run AI Agents Pipeline"}
                 </button>
               </div>
+
+              {errorMessage && (
+                <div className="card pipeline-message error-message" role="alert">
+                  <strong>Pipeline unavailable</strong>
+                  <p>{errorMessage}</p>
+                </div>
+              )}
+              {!isRunning && !result && !errorMessage && (
+                <div className="card pipeline-message" role="status">
+                  Add a role and resume, then run the pipeline to see results from the scoring
+                  backend. No sample results are generated in the browser.
+                </div>
+              )}
+              {isRunning && (
+                <div className="card pipeline-message" role="status" aria-live="polite">
+                  Sending the candidate and role details to the scoring backend. This can take
+                  several seconds.
+                </div>
+              )}
 
               {/* Sequential Agent Pipeline Visualizer */}
               {(isRunning || result) && (
@@ -450,7 +502,7 @@ The Hiring Team`;
                     {pipelineSteps.map((step, idx) => (
                       <div
                         key={step.name}
-                        className={`agent-node ${step.status === "running" ? "active" : step.status === "done" ? "done" : ""}`}
+                        className={`agent-node ${step.status === "running" ? "active" : step.status === "done" ? "done" : step.status === "blocked" ? "blocked" : ""}`}
                       >
                         <div style={{ fontSize: "10px", fontWeight: 700, color: "var(--mute)", marginBottom: "4px" }}>
                           AGENT 0{idx + 1}
@@ -466,13 +518,14 @@ The Hiring Team`;
                             className={`badge ${step.status === "done" ? "green" : step.status === "running" ? "pink" : ""}`}
                             style={{ fontSize: "9px" }}
                           >
-                            {step.status === "running" ? "Processing..." : step.status === "done" ? "Complete" : "Queued"}
+                            {step.status === "running"
+                              ? "Processing..."
+                              : step.status === "done"
+                                ? "Complete"
+                                : step.status === "blocked"
+                                  ? "Needs review"
+                                  : "Queued"}
                           </span>
-                          {step.duration > 0 && (
-                            <span style={{ fontSize: "10px", color: "var(--mute)" }}>
-                              {step.duration}ms
-                            </span>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -482,7 +535,7 @@ The Hiring Team`;
 
               {/* Generated Result Output */}
               {result && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "24px" }}>
+                <div className="assistant-result-grid">
                   {/* Left Column: Scorecard & Gaps */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
                     {/* Score Summary Card */}
@@ -501,8 +554,8 @@ The Hiring Team`;
                           <div style={{ fontFamily: "var(--font-pixelify)", fontSize: "36px", color: "var(--g)" }}>
                             {result.overallScore}%
                           </div>
-                          <span className={`badge ${result.verdictColor}`}>
-                            {result.verdict}
+                          <span className="badge green">
+                            {result.recommendation}
                           </span>
                         </div>
                       </div>
@@ -520,9 +573,9 @@ The Hiring Team`;
                       >
                         <div>
                           <small style={{ display: "block", fontSize: "10.5px", color: "var(--mute)" }}>
-                            Confidence
+                            Screening score
                           </small>
-                          <b style={{ fontSize: "14px" }}>{result.confidence}%</b>
+                          <b style={{ fontSize: "14px" }}>{result.screeningScore}%</b>
                         </div>
                         <div>
                           <small style={{ display: "block", fontSize: "10.5px", color: "var(--mute)" }}>
@@ -536,7 +589,9 @@ The Hiring Team`;
                           <small style={{ display: "block", fontSize: "10.5px", color: "var(--mute)" }}>
                             Recommendation
                           </small>
-                          <b style={{ fontSize: "14px", color: "var(--onink)" }}>Advance to Interview</b>
+                          <b style={{ fontSize: "14px", color: "var(--onink)" }}>
+                            {result.recommendation}
+                          </b>
                         </div>
                       </div>
                     </div>
@@ -632,31 +687,6 @@ The Hiring Team`;
                       </div>
                     </div>
 
-                    {/* Candidate Email Card */}
-                    <div className="card">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                        <h4 className="px" style={{ fontSize: "16px" }}>
-                          Personalized Outreach Email
-                        </h4>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={handleCopyEmail}
-                        >
-                          {copiedEmail ? "✔ Copied!" : "📋 Copy Email"}
-                        </button>
-                      </div>
-                      <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>
-                        Subject: {result.emailSubject}
-                      </div>
-                      <textarea
-                        className="input-field"
-                        rows={8}
-                        readOnly
-                        value={result.emailBody}
-                        style={{ fontSize: "12.5px", lineHeight: "1.45" }}
-                      />
-                    </div>
                   </div>
                 </div>
               )}
@@ -798,4 +828,3 @@ The Hiring Team`;
     </div>
   );
 }
-

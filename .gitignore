@@ -26,6 +26,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
+.env.local
 .env*.local
 
 # vercel
@@ -39,3 +41,6 @@ next-env.d.ts
 __pycache__/
 *.pyc
 *.log
+/backend/.env
+/backend/stap.db
+/backend/chroma_data/

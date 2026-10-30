@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { NAV_LINKS } from "@/lib/constants";
 
@@ -32,8 +33,6 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
           : 1;
       });
 
-    if (sections.length === 0) return;
-
     const updateActiveSection = () => {
       if (scrollSpyPausedRef.current) return;
 
@@ -42,6 +41,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
       const atBottom =
         window.scrollY + window.innerHeight >=
         document.documentElement.scrollHeight - 1;
+
       const activeId = atBottom
         ? sections[sections.length - 1].id
         : sections.reduce((lastVisibleId, section) => {
@@ -85,7 +85,6 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
     const onScrollEnd = () => {
       if (scrollEndArmedRef.current) resumeScrollSpy();
     };
-
     window.addEventListener("scroll", scheduleActiveSectionUpdate, {
       passive: true,
     });
@@ -113,6 +112,32 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (headerRef.current && target && !headerRef.current.contains(target)) {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [mobileMenuOpen]);
 
   const handleAnchorClick = (
     e: React.MouseEvent<HTMLAnchorElement>,
@@ -164,10 +189,10 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
 
   return (
     <header className="site-header" ref={headerRef}>
-      <nav>
-        <div className="logo">
+      <nav aria-label="Primary">
+        <a className="logo" href="#product" onClick={(e) => handleAnchorClick(e, "#product")}>
           <i></i>STAP
-        </div>
+        </a>
 
         <ul>
           {NAV_LINKS.map((link) => {
@@ -189,6 +214,9 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
 
         <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
           <ThemeToggle />
+          <Link className="btn-text nav-desktop-cta" href="/assistant">
+            Try the Demo
+          </Link>
           <button
             className="btn-text js-login-btn nav-desktop-cta"
             type="button"
@@ -207,7 +235,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
             className="menu-toggle"
             id="menu-toggle"
             type="button"
-            aria-expanded={mobileMenuOpen ? "true" : "false"}
+            aria-expanded={mobileMenuOpen}
             aria-controls="mobile-menu"
             aria-label="Toggle navigation menu"
             onClick={() => setMobileMenuOpen((prev) => !prev)}
@@ -219,11 +247,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
         </div>
       </nav>
 
-      <div
-        className="mobile-menu"
-        id="mobile-menu"
-        hidden={!mobileMenuOpen}
-      >
+      <div className="mobile-menu" id="mobile-menu" hidden={!mobileMenuOpen}>
         <ul>
           {NAV_LINKS.map((link) => {
             const isActive = activeSection === link.href.slice(1);
@@ -253,6 +277,14 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
           >
             Log in
           </button>
+          <Link
+            className="btn-text"
+            href="/assistant"
+            style={{ textAlign: "left", padding: "8px 0" }}
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Try the Demo
+          </Link>
           <button
             className="btn dark js-book-demo"
             type="button"
