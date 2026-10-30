@@ -1419,7 +1419,7 @@ footer {
 section[id],
 div[id].hero,
 div[id].cta {
-  scroll-margin-top: calc(58px + env(safe-area-inset-top, 0px));
+  scroll-margin-top: calc(80px + env(safe-area-inset-top, 0px));
 }
 
 #product.hero {
@@ -1498,4 +1498,3 @@ div[id].cta {
     display: none !important;
   }
 }
-

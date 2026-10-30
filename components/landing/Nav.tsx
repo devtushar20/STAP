@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { NAV_LINKS } from "@/lib/constants";
 
@@ -12,27 +12,106 @@ interface NavProps {
 export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
   const [activeSection, setActiveSection] = useState<string>("product");
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const scrollSpyPausedRef = useRef(false);
+  const scrollEndArmedRef = useRef(false);
+  const scrollEndTimeoutRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const anchorScrollFrameRef = useRef<number | null>(null);
+  const resumeScrollSpyRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    const sectionIds = ["product", "agents", "pipeline", "pricing", "resources", "cta"];
+    const sections = NAV_LINKS.map((link) =>
+      document.getElementById(link.href.slice(1))
+    )
+      .filter((section): section is HTMLElement => section !== null)
+      .sort((a, b) => {
+        if (a === b) return 0;
+        return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+          ? -1
+          : 1;
+      });
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
-          }
-        });
-      },
-      { rootMargin: "-20% 0px -60% 0px", threshold: 0.1 }
-    );
+    if (sections.length === 0) return;
 
-    sectionIds.forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
+    const updateActiveSection = () => {
+      if (scrollSpyPausedRef.current) return;
+
+      const headerHeight = headerRef.current?.getBoundingClientRect().height ?? 0;
+      const threshold = headerHeight + 24;
+      const atBottom =
+        window.scrollY + window.innerHeight >=
+        document.documentElement.scrollHeight - 1;
+      const activeId = atBottom
+        ? sections[sections.length - 1].id
+        : sections.reduce((lastVisibleId, section) => {
+            return section.getBoundingClientRect().top <= threshold
+              ? section.id
+              : lastVisibleId;
+          }, sections[0].id);
+
+      setActiveSection((previous) =>
+        previous === activeId ? previous : activeId
+      );
+    };
+
+    const scheduleActiveSectionUpdate = () => {
+      if (
+        scrollSpyPausedRef.current ||
+        animationFrameRef.current !== null
+      ) {
+        return;
+      }
+
+      animationFrameRef.current = window.requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        updateActiveSection();
+      });
+    };
+
+    const resumeScrollSpy = () => {
+      if (!scrollSpyPausedRef.current) return;
+
+      scrollSpyPausedRef.current = false;
+      if (scrollEndTimeoutRef.current !== null) {
+        window.clearTimeout(scrollEndTimeoutRef.current);
+        scrollEndTimeoutRef.current = null;
+      }
+      updateActiveSection();
+    };
+
+    resumeScrollSpyRef.current = resumeScrollSpy;
+
+    const onScrollEnd = () => {
+      if (scrollEndArmedRef.current) resumeScrollSpy();
+    };
+
+    window.addEventListener("scroll", scheduleActiveSectionUpdate, {
+      passive: true,
     });
+    window.addEventListener("resize", scheduleActiveSectionUpdate);
+    window.addEventListener("scrollend", onScrollEnd);
+    document.addEventListener("scrollend", onScrollEnd);
+    scheduleActiveSectionUpdate();
 
-    return () => observer.disconnect();
+    return () => {
+      window.removeEventListener("scroll", scheduleActiveSectionUpdate);
+      window.removeEventListener("resize", scheduleActiveSectionUpdate);
+      window.removeEventListener("scrollend", onScrollEnd);
+      document.removeEventListener("scrollend", onScrollEnd);
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      if (anchorScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(anchorScrollFrameRef.current);
+        anchorScrollFrameRef.current = null;
+      }
+      if (scrollEndTimeoutRef.current !== null) {
+        window.clearTimeout(scrollEndTimeoutRef.current);
+        scrollEndTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   const handleAnchorClick = (
@@ -45,24 +124,43 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
     if (targetEl) {
       e.preventDefault();
       setMobileMenuOpen(false);
+      setActiveSection(targetId);
+      scrollSpyPausedRef.current = true;
+      scrollEndArmedRef.current = false;
+      if (anchorScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(anchorScrollFrameRef.current);
+      }
+      if (scrollEndTimeoutRef.current !== null) {
+        window.clearTimeout(scrollEndTimeoutRef.current);
+        scrollEndTimeoutRef.current = null;
+      }
 
       const prefersReducedMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
 
-      targetEl.scrollIntoView({
-        behavior: prefersReducedMotion ? "auto" : "smooth",
-        block: "start",
-      });
+      anchorScrollFrameRef.current = window.requestAnimationFrame(() => {
+        anchorScrollFrameRef.current = null;
+        scrollEndArmedRef.current = true;
+        targetEl.scrollIntoView({
+          behavior: prefersReducedMotion ? "auto" : "smooth",
+          block: "start",
+        });
 
-      window.history.pushState(null, "", `#${targetId}`);
-      targetEl.setAttribute("tabindex", "-1");
-      targetEl.focus({ preventScroll: true });
+        if (prefersReducedMotion) {
+          resumeScrollSpyRef.current();
+        } else {
+          scrollEndTimeoutRef.current = window.setTimeout(
+            () => resumeScrollSpyRef.current(),
+            600
+          );
+        }
+      });
     }
   };
 
   return (
-    <header className="site-header">
+    <header className="site-header" ref={headerRef}>
       <nav>
         <div className="logo">
           <i></i>STAP
@@ -76,7 +174,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
                 <a
                   className={`nav-link ${isActive ? "active" : ""}`}
                   href={link.href}
-                  aria-current={isActive ? "true" : undefined}
+                  aria-current={isActive ? "location" : undefined}
                   onClick={(e) => handleAnchorClick(e, link.href)}
                 >
                   {link.label}
@@ -131,6 +229,7 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
                 <a
                   className={`mobile-nav-link ${isActive ? "active" : ""}`}
                   href={link.href}
+                  aria-current={isActive ? "location" : undefined}
                   onClick={(e) => handleAnchorClick(e, link.href)}
                 >
                   {link.label}
@@ -167,4 +266,3 @@ export const Nav: React.FC<NavProps> = ({ onOpenDemo, onOpenLogin }) => {
     </header>
   );
 };
-
